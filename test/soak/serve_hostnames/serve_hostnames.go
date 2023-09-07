@@ -35,11 +35,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	"k8s.io/kubernetes/pkg/controller/apis/config/scheme"
 	e2e "k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/framework/service"
 
@@ -94,17 +96,26 @@ func main() {
 		settings.CurrentContext = *gke
 	}
 	klog.Infof("Using the following settings: %v ", *settings)
-	config, err := clientcmd.NewDefaultClientConfig(*settings, &clientcmd.ConfigOverrides{}).ClientConfig()
-	if err != nil {
-		klog.Fatalf("Failed to construct config: %v", err)
-	}
-	if *kubeconfig != "" || *gke == "" {
-		cgv, err := schema.ParseGroupVersion(settings.APIVersion)
+	klog.Infof("Using the following apiversion: %v ", settings.APIVersion)
+	var config *restclient.Config
+	if *gke != "" {
+		config, err = clientcmd.NewDefaultClientConfig(*settings, &clientcmd.ConfigOverrides{}).ClientConfig()
 		if err != nil {
-			klog.Fatalf("Failed to parse GroupVersion: %v", err)
+			klog.Fatalf("Failed to construct config: %v", err)
 		}
-		config.ContentConfig.GroupVersion = &cgv
-		// config.ContentConfig.NegotiatedSerializer = &runtime.NegotiatedSerializer{}
+	} else {
+		kubeconfigBytes, err := os.ReadFile(spec)
+		if err != nil {
+			klog.Fatalf("Error reading kubeconfig: %v", err.Error())
+		}
+		restConfig, err := clientcmd.NewClientConfigFromBytes(kubeconfigBytes)
+		if err != nil {
+			klog.Fatalf("Error reading kubeconfig bytes: %v", err.Error())
+		}
+		config, err = (restConfig).ClientConfig()
+		if err != nil {
+			klog.Fatalf("Error getting ClientConfig: %v", err.Error())
+		}
 	}
 
 	client, err := clientset.NewForConfig(config)
@@ -290,6 +301,20 @@ func main() {
 		}
 	}
 
+	if *gke == "" {
+		config.ContentConfig.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme)
+		// cgv, err := schema.ParseGroupVersion(settings.APIVersion)
+		cgv := schema.GroupVersion{
+			Group:   "",
+			Version: "v1",
+		}
+		if err != nil {
+			klog.Fatalf("Failed to parse GroupVersion: %v", err)
+		}
+		config.ContentConfig.GroupVersion = &cgv
+		config.APIPath = "/api"
+	}
+
 	rclient, err := restclient.RESTClientFor(config)
 	if err != nil {
 		klog.Warningf("Failed to build restclient: %v", err)
@@ -308,11 +333,14 @@ func main() {
 	}
 
 	// Wait for the endpoints to propagate.
+	// time.Sleep(5 * time.Minute)
 	for start := time.Now(); time.Since(start) < endpointTimeout; time.Sleep(10 * time.Second) {
 		hostname, err := proxyRequest.
 			Namespace(ns).
 			Name("serve-hostnames").
 			DoRaw(context.TODO())
+		klog.Infof("%v", proxyRequest.Namespace(ns).Name("serve-hostnames"))
+		klog.Infof("%v", string(hostname))
 		if err != nil {
 			klog.Infof("After %v while making a proxy call got error %v", time.Since(start), err)
 			continue
