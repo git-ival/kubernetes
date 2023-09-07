@@ -34,6 +34,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
@@ -51,6 +52,7 @@ var (
 	upTo           = flag.Int("up_to", 1, "Number of iterations or -1 for no limit")
 	maxPar         = flag.Int("max_par", 500, "Maximum number of queries in flight")
 	gke            = flag.String("gke_context", "", "Target GKE cluster with context gke_{project}_{zone}_{cluster-name}")
+	kubeconfig     = flag.String("kubeconfig", "", "Path to kubeconfig file that contains context and needed authentication token/key")
 )
 
 const (
@@ -73,8 +75,17 @@ func main() {
 	if *gke != "" {
 		spec = filepath.Join(os.Getenv("HOME"), ".config", "gcloud", "kubernetes", "kubeconfig")
 	} else {
-		spec = filepath.Join(os.Getenv("HOME"), ".kube", "config")
+		if *kubeconfig != "" {
+			cwd, err := filepath.Abs(filepath.Dir(os.Args[0]))
+			if err != nil {
+				klog.Fatalf("Error getting absolute path to cwd: %v", err.Error())
+			}
+			spec = filepath.Join(cwd, *kubeconfig)
+		} else {
+			spec = os.Args[1]
+		}
 	}
+	klog.Infof("Using the following spec: %v ", spec)
 	settings, err := clientcmd.LoadFromFile(spec)
 	if err != nil {
 		klog.Fatalf("Error loading configuration: %v", err.Error())
@@ -82,9 +93,18 @@ func main() {
 	if *gke != "" {
 		settings.CurrentContext = *gke
 	}
+	klog.Infof("Using the following settings: %v ", *settings)
 	config, err := clientcmd.NewDefaultClientConfig(*settings, &clientcmd.ConfigOverrides{}).ClientConfig()
 	if err != nil {
 		klog.Fatalf("Failed to construct config: %v", err)
+	}
+	if *kubeconfig != "" || *gke == "" {
+		cgv, err := schema.ParseGroupVersion(settings.APIVersion)
+		if err != nil {
+			klog.Fatalf("Failed to parse GroupVersion: %v", err)
+		}
+		config.ContentConfig.GroupVersion = &cgv
+		// config.ContentConfig.NegotiatedSerializer = &runtime.NegotiatedSerializer{}
 	}
 
 	client, err := clientset.NewForConfig(config)
@@ -210,6 +230,18 @@ func main() {
 							},
 						},
 						NodeName: node.Name,
+						Tolerations: []v1.Toleration{
+							{
+								Key:      "node-role.kubernetes.io/control-plane",
+								Operator: v1.TolerationOpExists,
+								Effect:   v1.TaintEffectNoSchedule,
+							},
+							{
+								Key:      "node-role.kubernetes.io/etcd",
+								Operator: v1.TolerationOpExists,
+								Effect:   v1.TaintEffectNoExecute,
+							},
+						},
 					},
 				}, metav1.CreateOptions{})
 				klog.V(4).Infof("Pod create %s/%s request took %v", ns, podName, time.Since(t))
@@ -261,12 +293,18 @@ func main() {
 	rclient, err := restclient.RESTClientFor(config)
 	if err != nil {
 		klog.Warningf("Failed to build restclient: %v", err)
+		klog.Warningf("Used Config: %v", config)
 		return
+	} else {
+		klog.Infof("restclient built successfully")
 	}
+
 	proxyRequest, errProxy := service.GetServicesProxyRequest(client, rclient.Get())
 	if errProxy != nil {
 		klog.Warningf("Get services proxy request failed: %v", errProxy)
 		return
+	} else {
+		klog.Infof("Get services proxy request succeeded")
 	}
 
 	// Wait for the endpoints to propagate.
@@ -278,14 +316,18 @@ func main() {
 		if err != nil {
 			klog.Infof("After %v while making a proxy call got error %v", time.Since(start), err)
 			continue
+		} else {
+			klog.Infof("After %v successfully made proxy call to %v", time.Since(start), hostname)
 		}
 		var r metav1.Status
 		if err := runtime.DecodeInto(legacyscheme.Codecs.UniversalDecoder(), hostname, &r); err != nil {
 			break
 		}
 		if r.Status == metav1.StatusFailure {
-			klog.Infof("After %v got status %v", time.Since(start), string(hostname))
+			klog.Infof("After %v got status %v", time.Since(start), string(r.Status))
 			continue
+		} else {
+			klog.Infof("After %v got status %v", time.Since(start), string(r.Status))
 		}
 		break
 	}
