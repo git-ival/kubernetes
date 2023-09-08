@@ -338,7 +338,8 @@ func main() {
 	klog.Info("Waiting for the Service endpoints to propagate")
 	serviceWaitInterval := 10 * time.Second
 	serviceWaitTimeout := 5 * time.Minute
-	e2e.WaitForServiceEndpointsNum(context.TODO(), client, ns, "serve-hostnames", len(nodes.Items), serviceWaitInterval, serviceWaitTimeout)
+	endpoints := len(nodes.Items) * *podsPerNode
+	e2e.WaitForServiceEndpointsNum(context.TODO(), client, ns, "serve-hostnames", endpoints, serviceWaitInterval, serviceWaitTimeout)
 	for start := time.Now(); time.Since(start) < endpointTimeout; time.Sleep(10 * time.Second) {
 		hostname, err := proxyRequest.
 			Namespace(ns).
