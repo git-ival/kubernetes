@@ -333,18 +333,18 @@ func main() {
 		klog.V(4).Infof("Get services proxy request succeeded")
 	}
 
+	fullRequest := proxyRequest.
+		Namespace(ns).
+		Name("serve-hostnames")
+
 	// Wait for the endpoints to propagate.
-	// time.Sleep(2 * time.Minute)
 	klog.Info("Waiting for the Service endpoints to propagate")
 	serviceWaitInterval := 10 * time.Second
 	serviceWaitTimeout := 5 * time.Minute
 	endpoints := len(nodes.Items) * *podsPerNode
 	e2e.WaitForServiceEndpointsNum(context.TODO(), client, ns, "serve-hostnames", endpoints, serviceWaitInterval, serviceWaitTimeout)
 	for start := time.Now(); time.Since(start) < endpointTimeout; time.Sleep(10 * time.Second) {
-		hostname, err := proxyRequest.
-			Namespace(ns).
-			Name("serve-hostnames").
-			DoRaw(context.TODO())
+		hostname, err := fullRequest.DoRaw(context.TODO())
 		klog.V(4).Infof("Response: %v", string(hostname))
 		if err != nil {
 			klog.Infof("After %v while making a proxy call got error %v", time.Since(start), err)
@@ -376,17 +376,7 @@ func main() {
 			go func(i int, query int) {
 				inFlight <- struct{}{}
 				t := time.Now()
-				proxyRequest, errProxy := service.GetServicesProxyRequest(client, rclient.Get())
-				if errProxy != nil {
-					klog.Warningf("Get services proxy request failed: %v", errProxy)
-					return
-				} else {
-					klog.V(4).Infof("Get services proxy request succeeded")
-				}
-				hostname, err := proxyRequest.
-					Namespace(ns).
-					Name("serve-hostnames").
-					DoRaw(context.TODO())
+				hostname, err := fullRequest.DoRaw(context.TODO())
 				klog.V(4).Infof("Response: %v", string(hostname))
 				klog.V(4).Infof("Proxy call in namespace %s took %v", ns, time.Since(t))
 				if err != nil {
