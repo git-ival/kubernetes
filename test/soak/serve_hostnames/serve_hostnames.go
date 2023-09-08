@@ -304,7 +304,6 @@ func main() {
 
 	if *gke == "" {
 		config.ContentConfig.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme)
-		// cgv, err := schema.ParseGroupVersion(settings.APIVersion)
 		cgv := schema.GroupVersion{
 			Group:   "",
 			Version: "v1",
