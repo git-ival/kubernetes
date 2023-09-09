@@ -55,6 +55,7 @@ var (
 	maxPar         = flag.Int("max_par", 500, "Maximum number of queries in flight")
 	gke            = flag.String("gke_context", "", "Target GKE cluster with context gke_{project}_{zone}_{cluster-name}")
 	kubeconfig     = flag.String("kubeconfig", "", "Path to kubeconfig file that contains context and needed authentication token/key")
+	duration       = flag.Int("max_dur", 2, "The maximum duration in minutes that all iterations must be completed within. If the iterations are not complete, this will cancel any remaining or in-progress iterations")
 )
 
 const (
@@ -69,8 +70,8 @@ const (
 
 func main() {
 	flag.Parse()
-	klog.Infof("Starting serve_hostnames soak test with queries=%d and podsPerNode=%d upTo=%d",
-		*queriesAverage, *podsPerNode, *upTo)
+	klog.Infof("Starting serve_hostnames soak test with queries=%d podsPerNode=%d upTo=%d maxPar=%d gke=%s kubeconfig=%s duration=%d",
+		*queriesAverage, *podsPerNode, *upTo, *maxPar, *gke, *kubeconfig, *duration)
 
 	var spec string
 	if *gke != "" {
@@ -365,14 +366,24 @@ func main() {
 	}
 
 	// Repeatedly make requests.
+	maxDuration := time.Duration(*duration) * time.Minute
+	queryStart := time.Now()
 	for iteration := 0; iteration != *upTo; iteration++ {
+		if time.Since(queryStart) > maxDuration {
+			klog.Infof("Reached max duration (%v), ending soak test!", maxDuration)
+			break
+		}
 		responseChan := make(chan string, queries)
 		// Use a channel of size *maxPar to throttle the number
 		// of in-flight requests to avoid overloading the service.
 		inFlight := make(chan struct{}, *maxPar)
 		start := time.Now()
 		for q := 0; q < queries; q++ {
+			if time.Since(queryStart) > maxDuration {
+				break
+			}
 			go func(i int, query int) {
+
 				inFlight <- struct{}{}
 				t := time.Now()
 				hostname, err := fullRequest.DoRaw(context.TODO())
