@@ -55,7 +55,7 @@ var (
 	maxPar         = flag.Int("max_par", 500, "Maximum number of queries in flight")
 	gke            = flag.String("gke_context", "", "Target GKE cluster with context gke_{project}_{zone}_{cluster-name}")
 	kubeconfig     = flag.String("kubeconfig", "", "Path to kubeconfig file that contains context and needed authentication token/key")
-	duration       = flag.Int("max_dur", 2, "The maximum duration in minutes that all iterations must be completed within. If the iterations are not complete, this will cancel any remaining or in-progress iterations. Best used when -up_to=-1")
+	duration       = flag.Int("max_dur", 30, "The maximum duration in minutes that all iterations must be completed within. If the iterations are not complete, this will cancel any remaining or in-progress iterations. Best used when -up_to=-1")
 )
 
 const (
